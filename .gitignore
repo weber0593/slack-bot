@@ -19,3 +19,6 @@
 
 # Compiled binary
 slack-bot
+
+# Config Files
+config.yaml

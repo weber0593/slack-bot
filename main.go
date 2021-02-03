@@ -5,16 +5,26 @@ import (
 	"fmt"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
+	"github.com/spf13/viper"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
 )
 
-var api = slack.New("xoxb-324896932822-1681656151255-sDAfMutG1atKEHre8WmlF0H9", slack.OptionDebug(true))
+var api *slack.Client
 
 func main() {
-	http.HandleFunc("/mention", func(w http.ResponseWriter, r *http.Request){
+	viper.SetConfigFile("./config.yaml")
+	err := viper.ReadInConfig()
+	if err != nil {
+		log.Fatalf("Err reading in Config %v", err)
+	}
+
+	apiToken := viper.GetString("api_token")
+	api = slack.New(apiToken, slack.OptionDebug(true))
+
+	http.HandleFunc("/mention", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Got mention event!\n")
 		body, err := ioutil.ReadAll(r.Body)
 		eventsAPIEvent, err := slackevents.ParseEvent(body, slackevents.OptionNoVerifyToken())
@@ -56,7 +66,7 @@ func main() {
 		}
 	})
 
-	http.HandleFunc("/command", func(w http.ResponseWriter, r *http.Request){
+	http.HandleFunc("/command", func(w http.ResponseWriter, r *http.Request) {
 		slashCommand, err := slack.SlashCommandParse(r)
 		if err != nil {
 			log.Fatalf("Got err %+v\n", err)
@@ -67,13 +77,12 @@ func main() {
 		}
 	})
 
-	http.HandleFunc("/interact", func(w http.ResponseWriter, r *http.Request){
+	http.HandleFunc("/interact", func(w http.ResponseWriter, r *http.Request) {
 		slashCommand, err := slack.SlashCommandParse(r)
 		if err != nil {
 			log.Fatalf("Got err %+v\n", err)
 		}
 		fmt.Printf("Command: %s\n", slashCommand.Command)
-
 
 		modalRequest := generateModal()
 		_, err = api.OpenView(slashCommand.TriggerID, modalRequest)
@@ -121,7 +130,7 @@ func main() {
 
 	})
 
-	http.HandleFunc("/interactive-submit", func(w http.ResponseWriter, r *http.Request){
+	http.HandleFunc("/interactive-submit", func(w http.ResponseWriter, r *http.Request) {
 		var i slack.InteractionCallback
 
 		err := json.Unmarshal([]byte(r.FormValue("payload")), &i)
@@ -140,7 +149,7 @@ func main() {
 		log.Printf("%+v", i)
 		_, _, err = api.PostMessage(i.User.ID,
 			slack.MsgOptionText(msg, false),
-			)
+		)
 
 		if err != nil {
 			fmt.Printf(err.Error())
@@ -149,7 +158,7 @@ func main() {
 		}
 	})
 
-	err := http.ListenAndServe(":8080", nil)
+	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
 		log.Fatalf("Got Error: %v", err)
 	}
@@ -192,12 +201,10 @@ func generateModal() slack.ModalViewRequest {
 	return modalRequest
 }
 
-
-
 func AnnoyGregg(s slack.SlashCommand) {
 	api.PostMessage(s.ChannelID,
-			slack.MsgOptionText(fmt.Sprintf("Received command `/annoygregg`"), false),
-			//msgOption,
+		slack.MsgOptionText(fmt.Sprintf("Received command `/annoygregg`"), false),
+		//msgOption,
 	)
 
 	var greggUserId string
@@ -216,9 +223,9 @@ func AnnoyGregg(s slack.SlashCommand) {
 	}
 
 	ticker := time.NewTicker(1 * time.Second)
-	for i := 0; i< 10; i++ {
+	for i := 0; i < 10; i++ {
 		select {
-		case <- ticker.C:
+		case <-ticker.C:
 			api.PostMessage(s.ChannelID,
 				slack.MsgOptionText(fmt.Sprintf("Hi <@%s> :wave:", greggUserId), false),
 			)
