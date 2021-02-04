@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/spf13/viper"
@@ -84,49 +85,11 @@ func main() {
 		}
 		fmt.Printf("Command: %s\n", slashCommand.Command)
 
-		modalRequest := generateModal()
+		modalRequest := generateTestModal()
 		_, err = api.OpenView(slashCommand.TriggerID, modalRequest)
 		if err != nil {
 			fmt.Printf("Error opening view: %s", err)
 		}
-
-		//_, _, err = api.PostMessage(slashCommand.ChannelID,
-		//	slack.MsgOptionBlocks(
-		//		//slack.NewContextBlock(
-		//		//	"context",
-		//		//	slack.NewTextBlockObject(
-		//		//		slack.PlainTextType,
-		//		//		"test",
-		//		//		false,
-		//		//		false,
-		//		//	),
-		//		//),
-		//		slack.NewInputBlock(
-		//			"input", //	A string acting as a unique identifier for a block. If not specified, one will be generated. Maximum length for this field is 255 characters. block_id should be unique for each message and each iteration of a message. If a message is updated, use a new block_id.
-		//			slack.NewTextBlockObject(
-		//				slack.PlainTextType,
-		//				"label_test",
-		//				false,
-		//				false,
-		//			),
-		//			slack.NewPlainTextInputBlockElement(
-		//				slack.NewTextBlockObject(
-		//					slack.PlainTextType,
-		//					"placeholder_tet",
-		//					false,
-		//					false,
-		//					),
-		//				"test_input", // This is used to identify the data in the response from the form submission
-		//			),
-		//		),
-		//	),
-		//	slack.MsgOptionText(fmt.Sprintf("Received command `/interact`"), false),
-		//
-		//)
-
-		//if err != nil {
-		//	log.Fatalf("Got err: %v", err)
-		//}
 
 	})
 
@@ -140,21 +103,45 @@ func main() {
 			return
 		}
 
-		// Note there might be a better way to get this info, but I figured this structure out from looking at the json response
-		firstName := i.View.State.Values["First Name"]["firstName"].Value
-		lastName := i.View.State.Values["Last Name"]["lastName"].Value
+		spew.Dump(i)
+		switch i.View.CallbackID {
+		case "test-modal":
+			// Note there might be a better way to get this info, but I figured this structure out from looking at the json response
+			firstName := i.View.State.Values["First Name"]["firstName"].Value
+			lastName := i.View.State.Values["Last Name"]["lastName"].Value
 
-		msg := fmt.Sprintf("Hello %s %s, nice to meet you!", firstName, lastName)
+			msg := fmt.Sprintf("Hello %s %s, nice to meet you!", firstName, lastName)
 
-		log.Printf("%+v", i)
-		_, _, err = api.PostMessage(i.User.ID,
-			slack.MsgOptionText(msg, false),
-		)
+			log.Printf("%+v", i)
+			_, _, err = api.PostMessage(i.User.ID,
+				slack.MsgOptionText(msg, false),
+			)
 
+			if err != nil {
+				fmt.Printf(err.Error())
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			break
+		case "incident-modal":
+			handleIncidentModalSubmit(i)
+			break
+		default:
+			log.Printf("Unknown Callback ID: %s", i.CallbackID)
+		}
+	})
+
+	http.HandleFunc("/incident", func(w http.ResponseWriter, r *http.Request) {
+		slashCommand, err := slack.SlashCommandParse(r)
 		if err != nil {
-			fmt.Printf(err.Error())
-			w.WriteHeader(http.StatusUnauthorized)
-			return
+			log.Printf("Got err %+v\n", err)
+		}
+		log.Printf("Command: %s\n", slashCommand.Command)
+
+		modalRequest := generateIncidentModal()
+		_, err = api.OpenView(slashCommand.TriggerID, modalRequest)
+		if err != nil {
+			log.Printf("Error opening view: %s", err)
 		}
 	})
 
@@ -164,7 +151,7 @@ func main() {
 	}
 }
 
-func generateModal() slack.ModalViewRequest {
+func generateTestModal() slack.ModalViewRequest {
 	// Create a ModalViewRequest with a header and two inputs
 	titleText := slack.NewTextBlockObject("plain_text", "My App", false, false)
 	closeText := slack.NewTextBlockObject("plain_text", "Close", false, false)
@@ -198,7 +185,64 @@ func generateModal() slack.ModalViewRequest {
 	modalRequest.Close = closeText
 	modalRequest.Submit = submitText
 	modalRequest.Blocks = blocks
+	modalRequest.CallbackID = "test-modal"
 	return modalRequest
+}
+
+func generateIncidentModal() slack.ModalViewRequest {
+	titleText := slack.NewTextBlockObject("plain_text", "Create Incident", false, false)
+	closeText := slack.NewTextBlockObject("plain_text", "Cancel", false, false)
+	submitText := slack.NewTextBlockObject("plain_text", "Submit", false, false)
+
+	sectionText := slack.NewTextBlockObject("mrkdwn", "Please fill out the details of your incident", false, false)
+	sectionBlock := slack.NewSectionBlock(sectionText, nil, nil)
+
+	descriptionText := slack.NewTextBlockObject("plain_text", "Description", false, false)
+	descriptionPlaceholder := slack.NewTextBlockObject("plain_text", "Saw an increase in map3 counts...", false, false)
+	descriptionElement := slack.PlainTextInputBlockElement{
+		Type:        slack.METPlainTextInput,
+		ActionID:    "description",
+		Placeholder: descriptionPlaceholder,
+		Multiline:   true,
+	}
+	// Notice that blockID is a unique identifier for a block
+	descriptionBlock := slack.NewInputBlock("Description", descriptionText, descriptionElement)
+
+	priorityLabel := slack.NewTextBlockObject("plain_text", "Priority", false, false)
+	priorityPlaceholder := slack.NewTextBlockObject("plain_text", "Select Priority", false, false)
+	var priorityOptions []*slack.OptionBlockObject
+	for i := 1; i <= 5; i++ {
+		textString := fmt.Sprintf("%d", i)
+		if i == 1 {
+			textString += " - Lowest"
+		} else if i == 5 {
+			textString += " - Highest"
+		}
+		priorityOption := slack.OptionBlockObject{
+			Text:  slack.NewTextBlockObject("plain_text", textString, false, false),
+			Value: fmt.Sprintf("%d", i),
+		}
+		priorityOptions = append(priorityOptions, &priorityOption)
+	}
+	priorityElement := slack.NewOptionsSelectBlockElement("static_select", priorityPlaceholder, "priority", priorityOptions...)
+	priorityBlock := slack.NewInputBlock("Priority", priorityLabel, priorityElement)
+
+	blocks := slack.Blocks{
+		BlockSet: []slack.Block{
+			sectionBlock,
+			descriptionBlock,
+			priorityBlock,
+		},
+	}
+
+	return slack.ModalViewRequest{
+		Type:       slack.ViewType("modal"),
+		Title:      titleText,
+		Close:      closeText,
+		Submit:     submitText,
+		Blocks:     blocks,
+		CallbackID: "incident-modal",
+	}
 }
 
 func AnnoyGregg(s slack.SlashCommand) {
@@ -231,4 +275,11 @@ func AnnoyGregg(s slack.SlashCommand) {
 			)
 		}
 	}
+}
+
+func handleIncidentModalSubmit(i slack.InteractionCallback) {
+	log.Printf("Priority: %s", i.View.State.Values["Priority"]["priority"].SelectedOption.Value)
+	log.Printf("Description: %s", i.View.State.Values["Description"]["description"].Value)
+	log.Printf("Submitter: %s", i.User.Name)
+	log.Printf(time.Now().String())
 }
